@@ -40,6 +40,7 @@ class DDSProcessor:
         self.fps = 30.0
         self.prev_time = time.time()
         self.is_paused = False
+        self.head_distracted_consec_frames = 0
 
     def change_source(self, new_source):
         self.camera.open_source(new_source)
@@ -71,12 +72,21 @@ class DDSProcessor:
         # 2. YOLOv8 Object Detection
         yolo_distracted, detections = self.yolo_detector.detect(frame, face_bbox=face_bbox)
 
-        # 3. Rule Evaluation
+        # 3. Rule Evaluation with Head Pose Debouncing
+        if face_data and face_data["is_head_distracted"]:
+            self.head_distracted_consec_frames += 1
+        else:
+            self.head_distracted_consec_frames = max(0, self.head_distracted_consec_frames - 2)
+
+        is_sustained_head_distraction = (
+            self.head_distracted_consec_frames >= config.HEAD_DISTRACTION_CONSEC_FRAMES
+        )
+
         if face_data and face_data["is_eyes_closed"]:
             self.alert_manager.trigger(AlertType.DROWSINESS)
         elif yolo_distracted:
             self.alert_manager.trigger(AlertType.PHONE)
-        elif face_data and face_data["is_head_distracted"]:
+        elif is_sustained_head_distraction:
             self.alert_manager.trigger(AlertType.LOOKING_AWAY)
         elif face_data and face_data["is_yawning"]:
             self.alert_manager.trigger(AlertType.YAWN)
@@ -86,12 +96,11 @@ class DDSProcessor:
         # 4. Telemetry Update
         is_eyes_closed = face_data["is_eyes_closed"] if face_data else False
         is_yawning = face_data["is_yawning"] if face_data else False
-        is_head_distracted = face_data["is_head_distracted"] if face_data else False
 
         self.telemetry.update(
             is_eyes_closed=is_eyes_closed,
             is_yawning=is_yawning,
-            is_head_distracted=is_head_distracted,
+            is_head_distracted=is_sustained_head_distraction,
             is_phone_distracted=yolo_distracted,
             fps=self.fps
         )

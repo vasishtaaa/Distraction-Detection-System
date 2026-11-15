@@ -41,10 +41,11 @@ MAR_CONSEC_FRAMES = 25
 YAWN_COOLDOWN_SEC = 4.0
 
 # Head Pose & Gaze Distraction Thresholds
-HEAD_YAW_THRESHOLD = 24.0          # Degrees left/right to trigger looking-away distraction
-HEAD_PITCH_DOWN_THRESHOLD = 18.0   # Degrees down (looking at phone/lap/desk)
-HEAD_PITCH_UP_THRESHOLD = 25.0     # Degrees up (staring at ceiling)
-DISTRACTION_TIME_SEC = 1.6         # Sustained seconds looking away before alert
+HEAD_YAW_THRESHOLD = 28.0          # Degrees left/right to trigger looking-away distraction
+HEAD_PITCH_DOWN_THRESHOLD = 26.0   # Degrees down (looking at phone/lap/desk)
+HEAD_PITCH_UP_THRESHOLD = 30.0     # Degrees up (staring at ceiling)
+HEAD_DISTRACTION_CONSEC_FRAMES = 14 # Consecutive frames to confirm looking away (~0.7s)
+DISTRACTION_TIME_SEC = 1.5         # Sustained seconds looking away before incident log
 
 # YOLOv8 External Object Distraction Thresholds
 YOLO_CONFIDENCE = 0.35

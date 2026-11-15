@@ -18,14 +18,14 @@ class DriverFaceAnalyzer:
     - 3D Head Pose (Pitch, Yaw, Roll) -> distraction / looking away
     """
 
-    # 3D generic facial anthropometric model points (in mm)
+    # 3D facial anthropometric model points (OpenCV convention: +X right, +Y down, +Z forward)
     MODEL_POINTS_3D = np.array([
-        (0.0, 0.0, 0.0),          # Nose tip
-        (0.0, -330.0, -65.0),     # Chin
-        (-225.0, 170.0, -135.0),  # Left eye outer corner
-        (225.0, 170.0, -135.0),   # Right eye outer corner
-        (-150.0, -150.0, -125.0), # Left mouth corner
-        (150.0, -150.0, -125.0)   # Right mouth corner
+        (0.0, 0.0, 0.0),             # Nose tip (index 1)
+        (0.0, 330.0, -65.0),         # Chin (index 152) -> down from nose (+Y)
+        (-225.0, -170.0, -135.0),    # Screen-left eye corner (index 33) -> up from nose (-Y)
+        (225.0, -170.0, -135.0),     # Screen-right eye corner (index 263) -> up from nose (-Y)
+        (-150.0, 150.0, -125.0),     # Screen-left mouth corner (index 61) -> down from nose (+Y)
+        (150.0, 150.0, -125.0)       # Screen-right mouth corner (index 291) -> down from nose (+Y)
     ], dtype=np.float64)
 
     # Landmark indices for EAR
@@ -133,8 +133,8 @@ class DriverFaceAnalyzer:
             "is_yawning": mar > config.MAR_THRESHOLD,
             "is_head_distracted": (
                 abs(yaw) > config.HEAD_YAW_THRESHOLD or
-                pitch > config.HEAD_PITCH_DOWN_THRESHOLD or
-                pitch < -config.HEAD_PITCH_UP_THRESHOLD
+                pitch < -config.HEAD_PITCH_DOWN_THRESHOLD or
+                pitch > config.HEAD_PITCH_UP_THRESHOLD
             )
         }
 
@@ -218,7 +218,8 @@ class DriverFaceAnalyzer:
         # Decompose rotation matrix into Euler angles
         # RQDecomp3x3 returns angles in degrees: [Pitch, Yaw, Roll]
         angles, _, _, _, _, _ = cv2.RQDecomp3x3(rot_matrix)
-        pitch = float(angles[0])
+        # Calibrate pitch with natural frontal baseline offset (~12 deg)
+        pitch = float(angles[0]) - 12.0
         yaw = float(angles[1])
         roll = float(angles[2])
 

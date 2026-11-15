@@ -110,6 +110,7 @@ def main():
     prev_time = time.time()
     fps = 30.0
     frame_idx = 0
+    head_distracted_consec_frames = 0
 
     try:
         while True:
@@ -139,12 +140,19 @@ def main():
             if yolo_detector is not None:
                 yolo_distracted, detections = yolo_detector.detect(frame, face_bbox=face_bbox)
 
-            # 3. Rule Evaluation
+            # 3. Rule Evaluation with Head Pose Debouncing
+            if face_data and face_data["is_head_distracted"]:
+                head_distracted_consec_frames += 1
+            else:
+                head_distracted_consec_frames = max(0, head_distracted_consec_frames - 2)
+
+            is_sustained_head_distraction = (head_distracted_consec_frames >= config.HEAD_DISTRACTION_CONSEC_FRAMES)
+
             if face_data and face_data["is_eyes_closed"]:
                 alert_manager.trigger(AlertType.DROWSINESS)
             elif yolo_distracted:
                 alert_manager.trigger(AlertType.PHONE)
-            elif face_data and face_data["is_head_distracted"]:
+            elif is_sustained_head_distraction:
                 alert_manager.trigger(AlertType.LOOKING_AWAY)
             elif face_data and face_data["is_yawning"]:
                 alert_manager.trigger(AlertType.YAWN)
@@ -154,12 +162,11 @@ def main():
             # 4. Telemetry Update
             is_eyes_closed = face_data["is_eyes_closed"] if face_data else False
             is_yawning = face_data["is_yawning"] if face_data else False
-            is_head_distracted = face_data["is_head_distracted"] if face_data else False
 
             telemetry.update(
                 is_eyes_closed=is_eyes_closed,
                 is_yawning=is_yawning,
-                is_head_distracted=is_head_distracted,
+                is_head_distracted=is_sustained_head_distraction,
                 is_phone_distracted=yolo_distracted,
                 fps=fps
             )
