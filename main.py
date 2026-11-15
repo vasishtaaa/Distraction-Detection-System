@@ -52,6 +52,18 @@ def parse_args():
         help="Optional path to record HUD-annotated output video"
     )
     parser.add_argument(
+        "--loop",
+        action="store_true",
+        default=True,
+        help="Loop video file playback continuously until 'q' is pressed (default: True)"
+    )
+    parser.add_argument(
+        "--no-loop",
+        action="store_false",
+        dest="loop",
+        help="Do not loop video file playback"
+    )
+    parser.add_argument(
         "--max-frames",
         type=int,
         default=None,
@@ -75,6 +87,13 @@ def main():
         print(f"[INIT] Opening video source file: {source}...")
 
     cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        if source == 0 and os.path.exists("sample_driver_demo.mp4"):
+            print("[INFO] Physical webcam index 0 not detected in this session.")
+            print("[INFO] Automatically falling back to demo video 'sample_driver_demo.mp4'...")
+            source = "sample_driver_demo.mp4"
+            cap = cv2.VideoCapture(source)
+
     if not cap.isOpened():
         print(f"[ERROR] Failed to open video source: {args.source}")
         print("[HINT] For webcam, verify your camera is connected. Or specify a video file with --source <file.mp4>")
@@ -120,8 +139,12 @@ def main():
         while True:
             ret, frame = cap.read()
             if not ret:
-                print("[INFO] End of video stream or camera disconnected.")
-                break
+                if args.loop and isinstance(source, str) and os.path.exists(source):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                if not ret:
+                    print("[INFO] End of video stream or camera disconnected.")
+                    break
 
             frame_idx += 1
             if args.max_frames and frame_idx > args.max_frames:
