@@ -129,15 +129,17 @@ python main.py --source sample_driver_demo.mp4
 
 ---
 
-## Desktop Keyboard Shortcuts
+## Keyboard Shortcuts (Desktop & Web)
 
-| Key | Action |
+| Shortcut Key | Action |
 |:---:|:---|
-| **`Q`** or **`ESC`** | Gracefully quit and save session telemetry report |
+| **`TAB`** or **`T`** | **Cycle Detection Mode** (`General` $\to$ `Study` $\to$ `Driving`) |
+| **`1`**, **`2`**, **`3`** | **Instant Mode Switch** (`1` = General, `2` = Study & Work, `3` = Driving) |
+| **`D`** | Toggle detailed 3D facial mesh wireframe overlay |
 | **`M`** | Toggle audio alerts (**Mute / Unmute**) |
 | **`R`** | Reset session statistics and attention score |
 | **`S`** | Save an instant snapshot to `snapshots/` folder |
-| **`D`** | Toggle detailed 3D facial mesh wireframe overlay |
+| **`Q`** or **`ESC`** | Gracefully quit and save session telemetry report (Desktop) |
 
 ---
 

@@ -18,6 +18,14 @@ class HUDOverlay:
     def __init__(self):
         self.show_debug_mesh = False
         self.pulse_counter = 0
+        self.mode_toast_text = None
+        self.mode_toast_until = 0.0
+
+    def trigger_mode_toast(self, mode_name):
+        """Displays an on-screen mode transition toast for 1.8 seconds."""
+        import time
+        self.mode_toast_text = f"SWITCHED TO {mode_name.upper()} MODE"
+        self.mode_toast_until = time.time() + 1.8
 
     def toggle_debug_mesh(self):
         self.show_debug_mesh = not self.show_debug_mesh
@@ -50,6 +58,11 @@ class HUDOverlay:
         # 5. Emergency Warning Flash Banner (only on critical danger)
         if alert_manager.active_alert in [AlertType.DROWSINESS, AlertType.PHONE]:
             self._draw_critical_banner(frame, alert_manager.active_alert)
+
+        # 6. Mode Switch Toast Notification
+        import time
+        if self.mode_toast_text and time.time() < self.mode_toast_until:
+            self._draw_mode_toast(frame)
 
         return frame
 
@@ -166,10 +179,10 @@ class HUDOverlay:
         cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
         cv2.line(frame, (0, h - bar_h), (w, h - bar_h), (35, 45, 60), 1)
 
-        # Mode Badge
-        mode_text = f"MODE: {telemetry.mode}"
-        cv2.putText(frame, mode_text, (18, h - 11),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.42, config.COLOR_PRIMARY, 1, cv2.LINE_AA)
+        # Mode Badge with [TAB] shortcut
+        mode_text = f"[TAB] MODE: {telemetry.mode}"
+        cv2.putText(frame, mode_text, (16, h - 11),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.44, config.COLOR_PRIMARY, 1, cv2.LINE_AA)
 
         # Focus Score & Time
         score = telemetry.compute_score()
@@ -177,14 +190,36 @@ class HUDOverlay:
         time_str = telemetry.get_summary()["duration_formatted"]
 
         mid_text = f"SCORE: {int(score)}%  |  TIME: {time_str}  |  {fps:.1f} FPS"
-        cv2.putText(frame, mid_text, (170, h - 11),
+        cv2.putText(frame, mid_text, (190, h - 11),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, score_color, 1, cv2.LINE_AA)
 
         # Right-aligned keyboard hints
-        audio_label = "MUTE [M]" if audio_enabled else "UNMUTE [M]"
-        controls_text = f"[D] Mesh  |  [S] Save  |  [R] Reset  |  [Q] Exit"
-        cv2.putText(frame, controls_text, (w - 320, h - 11),
+        controls_text = f"[TAB] Mode  [1-3]  |  [D] Mesh  |  [S] Save  |  [Q] Exit"
+        cv2.putText(frame, controls_text, (w - 365, h - 11),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, config.COLOR_MUTED, 1, cv2.LINE_AA)
+
+    def _draw_mode_toast(self, frame):
+        """Draws a floating toast notification when switching modes."""
+        h, w, _ = frame.shape
+        text = self.mode_toast_text
+        font = cv2.FONT_HERSHEY_DUPLEX
+        font_scale = 0.65
+        thick = 1
+        (tw, th), _ = cv2.getTextSize(text, font, font_scale, thick)
+
+        box_w = tw + 40
+        box_h = 42
+        box_x = int((w - box_w) / 2)
+        box_y = int(h * 0.46)
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (box_x, box_y), (box_x + box_w, box_y + box_h), (16, 22, 34), -1)
+        cv2.addWeighted(overlay, 0.90, frame, 0.10, 0, frame)
+        cv2.rectangle(frame, (box_x, box_y), (box_x + box_w, box_y + box_h), config.COLOR_PRIMARY, 2)
+
+        tx = box_x + 20
+        ty = box_y + int((box_h + th) / 2) - 1
+        cv2.putText(frame, text, (tx, ty), font, font_scale, (255, 255, 255), thick, cv2.LINE_AA)
 
     def _draw_critical_banner(self, frame, alert_type):
         """Subtle top alert banner that pulses during active critical violations."""

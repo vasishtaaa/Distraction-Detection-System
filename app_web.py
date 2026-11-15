@@ -478,10 +478,13 @@ def dashboard_html():
             <div class="brand-title">Distraction Detection <span>System</span></div>
         </div>
 
-        <div class="mode-selector">
-            <button class="mode-btn active" onclick="switchMode('GENERAL')">General Focus</button>
-            <button class="mode-btn" onclick="switchMode('STUDY')">Study & Work</button>
-            <button class="mode-btn" onclick="switchMode('DRIVING')">Driver Safety</button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="mode-selector">
+                <button class="mode-btn active" id="btn-mode-general" onclick="switchMode('GENERAL')">1 General</button>
+                <button class="mode-btn" id="btn-mode-study" onclick="switchMode('STUDY')">2 Study & Work</button>
+                <button class="mode-btn" id="btn-mode-driving" onclick="switchMode('DRIVING')">3 Driving</button>
+            </div>
+            <span style="font-size: 0.72rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">[Tab / 1-3]</span>
         </div>
 
         <div class="header-meta">
@@ -632,11 +635,38 @@ def dashboard_html():
 
         setInterval(updateDashboard, 800);
 
+        const MODES = ['GENERAL', 'STUDY', 'DRIVING'];
+        let currentModeIndex = 0;
+
         async function switchMode(mode) {
+            currentModeIndex = MODES.indexOf(mode);
             document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
+            const activeBtn = document.getElementById('btn-mode-' + mode.toLowerCase());
+            if (activeBtn) activeBtn.classList.add('active');
             await fetch('/api/set_mode?mode=' + encodeURIComponent(mode), { method: 'POST' });
         }
+
+        // Global Keyboard Shortcuts for Instant Mode Switching
+        window.addEventListener('keydown', (e) => {
+            // Ignore if user is typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            if (e.key === 'Tab' || e.key.toLowerCase() === 't') {
+                e.preventDefault();
+                currentModeIndex = (currentModeIndex + 1) % MODES.length;
+                switchMode(MODES[currentModeIndex]);
+            } else if (e.key === '1') {
+                switchMode('GENERAL');
+            } else if (e.key === '2') {
+                switchMode('STUDY');
+            } else if (e.key === '3') {
+                switchMode('DRIVING');
+            } else if (e.key.toLowerCase() === 'd') {
+                toggleMesh();
+            } else if (e.key.toLowerCase() === 'r') {
+                resetStats();
+            }
+        });
 
         async function switchSource(src) {
             await fetch('/api/switch_source?source=' + encodeURIComponent(src), { method: 'POST' });

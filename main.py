@@ -100,8 +100,11 @@ def main():
         writer = cv2.VideoWriter(args.output, fourcc, 30.0, (out_w, out_h))
         print(f"[RECORD] Saving annotated session -> {args.output}")
 
+    MODES = [config.MODE_GENERAL, config.MODE_STUDY, config.MODE_DRIVING]
+    current_mode_idx = MODES.index(args.mode.upper()) if args.mode.upper() in MODES else 0
+
     print("[SUCCESS] All systems active. Commencing real-time distraction detection.")
-    print("Controls: [Q] Quit | [M] Audio Mute | [R] Reset | [S] Snapshot | [D] 3D Mesh")
+    print("Controls: [TAB / 1-3] Switch Mode | [Q] Quit | [M] Audio Mute | [R] Reset | [S] Snapshot | [D] 3D Mesh")
     print("-" * 65)
 
     prev_time = time.time()
@@ -181,6 +184,30 @@ def main():
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q') or key == 27:
                     break
+                elif key == 9 or key == ord('t'):  # TAB key or 't' to cycle modes
+                    current_mode_idx = (current_mode_idx + 1) % len(MODES)
+                    new_mode = MODES[current_mode_idx]
+                    telemetry.set_mode(new_mode)
+                    hud.trigger_mode_toast(new_mode)
+                    print(f"[MODE] Cycled to: {new_mode}")
+                elif key == ord('1'):
+                    current_mode_idx = 0
+                    new_mode = MODES[0]
+                    telemetry.set_mode(new_mode)
+                    hud.trigger_mode_toast(new_mode)
+                    print(f"[MODE] Selected: {new_mode}")
+                elif key == ord('2'):
+                    current_mode_idx = 1
+                    new_mode = MODES[1]
+                    telemetry.set_mode(new_mode)
+                    hud.trigger_mode_toast(new_mode)
+                    print(f"[MODE] Selected: {new_mode}")
+                elif key == ord('3'):
+                    current_mode_idx = 2
+                    new_mode = MODES[2]
+                    telemetry.set_mode(new_mode)
+                    hud.trigger_mode_toast(new_mode)
+                    print(f"[MODE] Selected: {new_mode}")
                 elif key == ord('m'):
                     state = alert_manager.toggle_mute()
                     print(f"[AUDIO] Alerts {'UNMUTED' if state else 'MUTED'}")
