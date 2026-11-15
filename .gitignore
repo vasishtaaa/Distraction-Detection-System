@@ -9,6 +9,8 @@ env/
 
 # Data & Output Files
 test_annotated.mp4
+demo_run_recorded.mp4
+yolov8n.pt
 test_face.jpg
 session_reports/
 snapshots/

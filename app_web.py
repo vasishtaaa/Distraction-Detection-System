@@ -1,7 +1,7 @@
 """
-FastAPI Web Dashboard Interface for Driver Safety & Distraction Detection System.
-Provides a modern, high-tech automotive browser UI at http://127.0.0.1:8000
-with live MJPEG video streaming, interactive HUD controls, and real-time telemetry.
+Unified, Modern Web Dashboard for Distraction Detection System (DDS).
+Provides a responsive, high-tech interface with real-time video streaming,
+mode-switching, live telemetry gauges, and chronological incident logging.
 """
 
 import os
@@ -15,66 +15,63 @@ import uvicorn
 os.environ["MPLCONFIGDIR"] = os.path.join(os.environ.get("TEMP", "."), "matplotlib")
 
 import config
+from camera import ThreadedCamera
 from face_mesh_detector import DriverFaceAnalyzer
 from yolo_detector import DistractionObjectDetector
 from alert_system import AlertManager, AlertType
-from analytics import DriverTelemetry
+from analytics import AttentionTelemetry
 from ui_overlay import HUDOverlay
 
-app = FastAPI(title="Driver Safety & Distraction Detection System")
+app = FastAPI(title="Distraction Detection System (DDS)")
 
-class VideoStreamer:
-    def __init__(self, source=0):
-        self.source = source
-        self.cap = None
+class DDSProcessor:
+    """
+    Coordinates threaded camera acquisition, AI inference, and HUD rendering.
+    """
+
+    def __init__(self, initial_source=0, mode=config.DEFAULT_MODE):
+        self.mode = mode
+        self.camera = ThreadedCamera(source=initial_source, loop_video=True)
         self.face_analyzer = DriverFaceAnalyzer()
         self.yolo_detector = DistractionObjectDetector()
-        self.alert_manager = AlertManager(enabled=False) # Mute audio by default in web mode
-        self.telemetry = DriverTelemetry()
+        self.alert_manager = AlertManager(enabled=False) # Visual alerts by default in browser
+        self.telemetry = AttentionTelemetry(mode=self.mode)
         self.hud = HUDOverlay()
         self.fps = 30.0
         self.prev_time = time.time()
-        self.open_source(source)
+        self.is_paused = False
 
-    def open_source(self, source):
-        if self.cap is not None:
-            self.cap.release()
-        self.source = source
-        if str(source).isdigit():
-            source_idx = int(source)
-            self.cap = cv2.VideoCapture(source_idx, cv2.CAP_DSHOW)
-            if not self.cap.isOpened():
-                self.cap = cv2.VideoCapture(source_idx)
-        else:
-            self.cap = cv2.VideoCapture(str(source))
+    def change_source(self, new_source):
+        self.camera.open_source(new_source)
 
-        if not self.cap.isOpened() and os.path.exists("sample_driver_demo.mp4"):
-            self.source = "sample_driver_demo.mp4"
-            self.cap = cv2.VideoCapture("sample_driver_demo.mp4")
+    def set_mode(self, new_mode):
+        self.mode = new_mode
+        self.telemetry.set_mode(new_mode)
 
-    def get_frame(self):
-        if self.cap is None or not self.cap.isOpened():
+    def process_next_frame(self):
+        ret, frame = self.camera.read()
+        if not ret or frame is None:
             return None
 
-        ret, frame = self.cap.read()
-        if not ret:
-            # Loop playback for demo video
-            if isinstance(self.source, str) and os.path.exists(self.source):
-                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                ret, frame = self.cap.read()
-            if not ret:
-                return None
+        if self.is_paused:
+            ret, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            return buf.tobytes()
 
+        # Measure FPS
         curr_time = time.time()
         delta = curr_time - self.prev_time
         self.prev_time = curr_time
         if delta > 0:
             self.fps = 0.9 * self.fps + 0.1 * (1.0 / delta)
 
+        # 1. MediaPipe Face Landmark & Head Pose
         face_data = self.face_analyzer.analyze_frame(frame)
         face_bbox = face_data["face_bbox"] if face_data else None
+
+        # 2. YOLOv8 Object Detection
         yolo_distracted, detections = self.yolo_detector.detect(frame, face_bbox=face_bbox)
 
+        # 3. Rule Evaluation
         if face_data and face_data["is_eyes_closed"]:
             self.alert_manager.trigger(AlertType.DROWSINESS)
         elif yolo_distracted:
@@ -86,6 +83,7 @@ class VideoStreamer:
         else:
             self.alert_manager.clear()
 
+        # 4. Telemetry Update
         is_eyes_closed = face_data["is_eyes_closed"] if face_data else False
         is_yawning = face_data["is_yawning"] if face_data else False
         is_head_distracted = face_data["is_head_distracted"] if face_data else False
@@ -98,7 +96,8 @@ class VideoStreamer:
             fps=self.fps
         )
 
-        display_frame = self.hud.render(
+        # 5. Render HUD Overlay
+        annotated_frame = self.hud.render(
             frame=frame,
             face_data=face_data,
             yolo_distracted=yolo_distracted,
@@ -108,23 +107,23 @@ class VideoStreamer:
             fps=self.fps
         )
 
-        ret, buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        ret, buffer = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
         return buffer.tobytes()
 
-streamer = None
+dds = None
 
-def get_streamer():
-    global streamer
-    if streamer is None:
-        streamer = VideoStreamer(source=0)
-    return streamer
+def get_dds():
+    global dds
+    if dds is None:
+        dds = DDSProcessor(initial_source=0)
+    return dds
 
-def generate_frames():
-    s = get_streamer()
+def stream_generator():
+    processor = get_dds()
     while True:
-        frame_bytes = s.get_frame()
+        frame_bytes = processor.process_next_frame()
         if frame_bytes is None:
-            time.sleep(0.05)
+            time.sleep(0.04)
             continue
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
@@ -132,180 +131,524 @@ def generate_frames():
 @app.get("/video_feed")
 def video_feed():
     return StreamingResponse(
-        generate_frames(),
+        stream_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
 @app.get("/api/telemetry")
 def get_telemetry():
-    s = get_streamer()
-    summary = s.telemetry.get_summary()
-    return JSONResponse(content=summary)
+    p = get_dds()
+    return JSONResponse(content=p.telemetry.get_summary())
+
+@app.post("/api/set_mode")
+def set_mode(mode: str = "GENERAL"):
+    p = get_dds()
+    p.set_mode(mode.upper())
+    return {"status": "mode_updated", "mode": p.mode}
+
+@app.post("/api/switch_source")
+def switch_source(source: str = "0"):
+    p = get_dds()
+    p.change_source(source)
+    return {"status": "source_switched", "source": source}
 
 @app.post("/api/toggle_mesh")
 def toggle_mesh():
-    s = get_streamer()
-    state = s.hud.toggle_debug_mesh()
+    p = get_dds()
+    state = p.hud.toggle_debug_mesh()
     return {"mesh_enabled": state}
 
+@app.post("/api/toggle_mute")
+def toggle_mute():
+    p = get_dds()
+    state = p.alert_manager.toggle_mute()
+    return {"audio_enabled": state}
+
 @app.post("/api/reset")
-def reset_telemetry():
-    s = get_streamer()
-    s.telemetry = DriverTelemetry()
+def reset_session():
+    p = get_dds()
+    p.telemetry = AttentionTelemetry(mode=p.mode)
     return {"status": "reset_successful"}
 
-@app.post("/api/switch_camera")
-def switch_camera(camera: str = "0"):
-    s = get_streamer()
-    s.open_source(camera)
-    return {"status": f"switched_to_{camera}"}
-
 @app.get("/", response_class=HTMLResponse)
-def index_page():
+def dashboard_html():
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Driver Safety & Distraction Monitor - Web Dashboard</title>
+    <title>Distraction Detection System (DDS)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0f19;
-            --card-bg: rgba(22, 28, 45, 0.85);
-            --border-color: rgba(60, 75, 110, 0.4);
-            --accent-blue: #00d2ff;
-            --safe-green: #00e676;
-            --warn-amber: #ffab00;
-            --danger-red: #ff1744;
-            --text-main: #f0f4f8;
-            --text-muted: #8a9bb5;
+            --bg-base: #080b11;
+            --bg-surface: #101622;
+            --bg-card: rgba(20, 27, 42, 0.75);
+            --border-glass: rgba(255, 255, 255, 0.08);
+            --border-focus: rgba(0, 210, 255, 0.4);
+            
+            --cyan: #00d2ff;
+            --green: #00e676;
+            --amber: #ffab00;
+            --red: #ff1744;
+            --purple: #b388ff;
+            
+            --text-primary: #f0f4f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        body { background: var(--bg-color); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; }
-        
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-primary);
+            font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Top Navigation Header */
         header {
-            background: linear-gradient(180deg, rgba(16, 24, 40, 0.95), rgba(11, 15, 25, 0.95));
-            border-bottom: 1px solid var(--border-color);
-            padding: 16px 28px;
-            display: flex; justify-content: space-between; align-items: center;
+            background: rgba(16, 22, 34, 0.85);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-glass);
+            padding: 14px 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
-        .header-title { display: flex; align-items: center; gap: 12px; }
-        .logo-icon { width: 14px; height: 14px; border-radius: 50%; background: var(--accent-blue); box-shadow: 0 0 12px var(--accent-blue); }
-        h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; }
-        .badge { background: rgba(0, 210, 255, 0.15); color: var(--accent-blue); border: 1px solid var(--accent-blue); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
-        
-        main { display: grid; grid-template-columns: 1fr 340px; gap: 20px; padding: 20px; flex: 1; }
-        
-        .video-card {
-            background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px;
-            overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+
+        .brand-container { display: flex; align-items: center; gap: 14px; }
+        .brand-pill {
+            width: 32px; height: 32px; border-radius: 8px;
+            background: linear-gradient(135deg, var(--cyan), #0070f3);
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 16px rgba(0, 210, 255, 0.35);
         }
-        .video-header { padding: 12px 18px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
-        .video-container { position: relative; width: 100%; flex: 1; display: flex; align-items: center; justify-content: center; background: #000; min-height: 480px; }
-        .video-container img { width: 100%; height: auto; max-height: 640px; object-fit: contain; }
-        
-        .controls-toolbar { padding: 14px 18px; border-top: 1px solid var(--border-color); display: flex; gap: 10px; flex-wrap: wrap; }
-        button {
-            background: rgba(30, 42, 65, 0.8); color: var(--text-main); border: 1px solid var(--border-color);
-            padding: 8px 16px; border-radius: 8px; font-size: 0.82rem; font-weight: 600; cursor: pointer;
-            transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px;
+        .brand-pill svg { width: 18px; height: 18px; fill: #fff; }
+        .brand-title { font-size: 1.1rem; font-weight: 800; letter-spacing: -0.2px; }
+        .brand-title span { color: var(--cyan); }
+
+        .mode-selector {
+            display: flex; background: rgba(0,0,0,0.3); border: 1px solid var(--border-glass);
+            padding: 3px; border-radius: 10px; gap: 4px;
         }
-        button:hover { background: rgba(0, 210, 255, 0.2); border-color: var(--accent-blue); }
-        
-        .sidebar { display: flex; flex-direction: column; gap: 16px; }
-        .widget-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px; box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
-        .widget-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 12px; font-weight: 700; }
-        
-        .score-circle { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px 0; }
-        .score-val { font-size: 2.8rem; font-weight: 800; color: var(--safe-green); }
-        .score-grade { font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin-top: 2px; }
-        
-        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.85rem; }
-        .stat-row:last-child { border-bottom: none; }
-        .stat-label { color: var(--text-muted); }
-        .stat-value { font-weight: 600; color: var(--text-main); }
+        .mode-btn {
+            background: transparent; color: var(--text-secondary); border: none;
+            padding: 6px 14px; border-radius: 7px; font-size: 0.8rem; font-weight: 600;
+            cursor: pointer; transition: all 0.2s ease;
+        }
+        .mode-btn.active {
+            background: var(--cyan); color: #041019;
+            box-shadow: 0 2px 10px rgba(0, 210, 255, 0.35);
+        }
+
+        .header-meta { display: flex; align-items: center; gap: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 2s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.9); }
+        }
+
+        /* Main Workspace Grid */
+        main {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 24px;
+            padding: 24px;
+            max-width: 1720px;
+            margin: 0 auto;
+            width: 100%;
+            flex: 1;
+        }
+
+        @media (max-width: 1100px) {
+            main { grid-template-columns: 1fr; }
+        }
+
+        /* Video Showcase */
+        .video-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-glass);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
+
+        .video-meta-bar {
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border-glass);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+        }
+
+        .video-viewport {
+            background: #020408;
+            position: relative;
+            width: 100%;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 480px;
+        }
+
+        .video-viewport img {
+            width: 100%;
+            height: auto;
+            max-height: 620px;
+            object-fit: contain;
+            display: block;
+        }
+
+        /* Video Toolbar */
+        .video-controls {
+            padding: 14px 20px;
+            border-top: 1px solid var(--border-glass);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            background: rgba(10, 14, 22, 0.6);
+        }
+
+        .control-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            border: 1px solid var(--border-glass);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn:hover {
+            background: rgba(0, 210, 255, 0.15);
+            border-color: var(--cyan);
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: rgba(255, 23, 68, 0.2);
+            border-color: var(--red);
+        }
+
+        /* Sidebar Analytics */
+        .sidebar { display: flex; flex-direction: column; gap: 20px; }
+
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-glass);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .card-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: 700;
+            color: var(--text-secondary);
+        }
+
+        /* Circular Score Meter */
+        .score-hero {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 10px 0;
+        }
+
+        .score-dial {
+            position: relative;
+            width: 105px;
+            height: 105px;
+            flex-shrink: 0;
+        }
+        .score-dial svg { transform: rotate(-90deg); width: 105px; height: 105px; }
+        .dial-track { fill: none; stroke: rgba(255, 255, 255, 0.08); stroke-width: 8; }
+        .dial-fill {
+            fill: none;
+            stroke: var(--green);
+            stroke-width: 8;
+            stroke-linecap: round;
+            stroke-dasharray: 283;
+            stroke-dashoffset: 28;
+            transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+        }
+        .dial-text {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.65rem;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .score-details { display: flex; flex-direction: column; gap: 4px; }
+        .score-status { font-size: 1.15rem; font-weight: 700; color: var(--green); }
+        .score-sub { font-size: 0.82rem; color: var(--text-muted); }
+
+        /* Telemetry Stat Grid */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 4px;
+        }
+        .stat-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-glass);
+            border-radius: 10px;
+            padding: 12px;
+        }
+        .stat-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px; }
+        .stat-num { font-size: 1.15rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+
+        /* Incident Timeline */
+        .incident-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+            margin-top: 8px;
+        }
+        .incident-list::-webkit-scrollbar { width: 4px; }
+        .incident-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+
+        .incident-item {
+            background: rgba(255, 255, 255, 0.02);
+            border-left: 3px solid var(--amber);
+            padding: 8px 12px;
+            border-radius: 0 8px 8px 0;
+            font-size: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .incident-item.danger { border-left-color: var(--red); }
+        .incident-type { font-weight: 600; color: var(--text-primary); }
+        .incident-time { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-muted); }
+
+        .empty-placeholder {
+            text-align: center;
+            padding: 24px 0;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+        }
     </style>
 </head>
 <body>
     <header>
-        <div class="header-title">
-            <div class="logo-icon"></div>
-            <h1>Driver Safety & Distraction Monitor</h1>
-            <span class="badge">PROTOTYPE LIVE</span>
+        <div class="brand-container">
+            <div class="brand-pill">
+                <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+            </div>
+            <div class="brand-title">Distraction Detection <span>System</span></div>
         </div>
-        <div id="live-timer" style="font-size: 0.85rem; color: var(--text-muted);">TIME: 00:00</div>
+
+        <div class="mode-selector">
+            <button class="mode-btn active" onclick="switchMode('GENERAL')">General Focus</button>
+            <button class="mode-btn" onclick="switchMode('STUDY')">Study & Work</button>
+            <button class="mode-btn" onclick="switchMode('DRIVING')">Driver Safety</button>
+        </div>
+
+        <div class="header-meta">
+            <div class="live-dot"></div>
+            <span id="session-clock">00:00</span>
+        </div>
     </header>
 
     <main>
-        <div class="video-card">
-            <div class="video-header">
-                <div>LIVE AUTOMOTIVE HUD STREAM</div>
-                <div id="fps-badge" style="color: var(--accent-blue); font-weight: 600;">-- FPS</div>
+        <!-- Video Feed Section -->
+        <div class="video-panel">
+            <div class="video-meta-bar">
+                <span>REAL-TIME AI VISION HUD</span>
+                <span id="fps-display" style="color: var(--cyan); font-family: 'JetBrains Mono';">30.0 FPS</span>
             </div>
-            <div class="video-container">
-                <img src="/video_feed" alt="Driver HUD Video Feed">
+
+            <div class="video-viewport">
+                <img id="feed-img" src="/video_feed" alt="Video Feed">
             </div>
-            <div class="controls-toolbar">
-                <button onclick="switchCamera('0')">Integrated Camera (0)</button>
-                <button onclick="switchCamera('1')">Camera (1)</button>
-                <button onclick="switchCamera('sample_driver_demo.mp4')">Scenario Demo</button>
-                <button onclick="toggleMesh()">Toggle 3D Mesh</button>
-                <button onclick="resetStats()">Reset Stats</button>
+
+            <div class="video-controls">
+                <div class="control-group">
+                    <button class="btn" onclick="switchSource('0')">Camera 0 (Integrated)</button>
+                    <button class="btn" onclick="switchSource('1')">Camera 1</button>
+                    <button class="btn" onclick="switchSource('sample_driver_demo.mp4')">Demo Simulation</button>
+                </div>
+                <div class="control-group">
+                    <button class="btn" onclick="toggleMesh()">Toggle 3D Mesh</button>
+                    <button class="btn btn-danger" onclick="resetStats()">Reset Stats</button>
+                </div>
             </div>
         </div>
 
+        <!-- Sidebar Telemetry -->
         <div class="sidebar">
-            <div class="widget-card">
-                <div class="widget-title">Driver Safety Score</div>
-                <div class="score-circle">
-                    <div class="score-val" id="score-val">100</div>
-                    <div class="score-grade" id="score-grade">A+ (Excellent)</div>
+            <!-- Score Card -->
+            <div class="glass-card">
+                <div class="card-header">
+                    <div class="card-title">Real-Time Attention Index</div>
+                </div>
+                <div class="score-hero">
+                    <div class="score-dial">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="dial-track" cx="50" cy="50" r="45"></circle>
+                            <circle class="dial-fill" id="dial-circle" cx="50" cy="50" r="45"></circle>
+                        </svg>
+                        <div class="dial-text" id="score-text">100</div>
+                    </div>
+                    <div class="score-details">
+                        <div class="score-status" id="score-status">Focused & Alert</div>
+                        <div class="score-sub" id="score-sub">Zero inattention detected</div>
+                    </div>
                 </div>
             </div>
 
-            <div class="widget-card">
-                <div class="widget-title">Live Telemetry</div>
-                <div class="stat-row"><span class="stat-label">PERCLOS (Fatigue):</span><span class="stat-value" id="val-perclos">0.0%</span></div>
-                <div class="stat-row"><span class="stat-label">Blinks Tracked:</span><span class="stat-value" id="val-blinks">0</span></div>
-                <div class="stat-row"><span class="stat-label">Microsleeps:</span><span class="stat-value" id="val-microsleeps">0</span></div>
-                <div class="stat-row"><span class="stat-label">Yawn Episodes:</span><span class="stat-value" id="val-yawns">0</span></div>
-                <div class="stat-row"><span class="stat-label">Head Distractions:</span><span class="stat-value" id="val-head">0</span></div>
-                <div class="stat-row"><span class="stat-label">Phone Distractions:</span><span class="stat-value" id="val-phone">0</span></div>
-                <div class="stat-row"><span class="stat-label">Total Frames:</span><span class="stat-value" id="val-frames">0</span></div>
+            <!-- Key Metrics Grid -->
+            <div class="glass-card">
+                <div class="card-header">
+                    <div class="card-title">Live Telemetry Metrics</div>
+                </div>
+                <div class="stat-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Phone Distractions</div>
+                        <div class="stat-num" id="stat-phone" style="color: var(--red);">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Looking Away</div>
+                        <div class="stat-num" id="stat-head" style="color: var(--amber);">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Fatigue / Drowsiness</div>
+                        <div class="stat-num" id="stat-sleep" style="color: var(--purple);">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Blinks (Rate)</div>
+                        <div class="stat-num" id="stat-blinks" style="color: var(--cyan);">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Incident Log Timeline -->
+            <div class="glass-card" style="flex: 1;">
+                <div class="card-header">
+                    <div class="card-title">Chronological Event Timeline</div>
+                </div>
+                <div class="incident-list" id="incident-container">
+                    <div class="empty-placeholder">No distraction incidents logged yet.</div>
+                </div>
             </div>
         </div>
     </main>
 
     <script>
-        async function fetchTelemetry() {
+        async function updateDashboard() {
             try {
                 const res = await fetch('/api/telemetry');
                 if (res.ok) {
                     const data = await res.json();
-                    document.getElementById('score-val').innerText = Math.round(data.safety_score);
-                    document.getElementById('score-grade').innerText = data.rating_grade;
-                    document.getElementById('val-perclos').innerText = data.perclos_percentage + '%';
-                    document.getElementById('val-blinks').innerText = data.blink_count + ' (' + data.blinks_per_minute + ' BPM)';
-                    document.getElementById('val-microsleeps').innerText = data.microsleep_episodes;
-                    document.getElementById('val-yawns').innerText = data.yawn_episodes;
-                    document.getElementById('val-head').innerText = data.head_distraction_episodes;
-                    document.getElementById('val-phone').innerText = data.phone_usage_episodes;
-                    document.getElementById('val-frames').innerText = data.total_frames;
-                    document.getElementById('fps-badge').innerText = data.average_fps + ' FPS';
-                    document.getElementById('live-timer').innerText = 'TIME: ' + data.duration_formatted;
-                }
-            } catch (e) {}
-        }
-        setInterval(fetchTelemetry, 1000);
+                    
+                    // 1. Score Dial Animation
+                    const score = Math.round(data.attention_score);
+                    document.getElementById('score-text').innerText = score;
+                    const offset = 283 - (283 * (score / 100));
+                    const dial = document.getElementById('dial-circle');
+                    dial.style.strokeDashoffset = offset;
+                    
+                    if (score >= 80) {
+                        dial.style.stroke = 'var(--green)';
+                        document.getElementById('score-status').innerText = 'Focused & Alert';
+                        document.getElementById('score-status').style.color = 'var(--green)';
+                    } else if (score >= 60) {
+                        dial.style.stroke = 'var(--amber)';
+                        document.getElementById('score-status').innerText = 'Minor Inattention';
+                        document.getElementById('score-status').style.color = 'var(--amber)';
+                    } else {
+                        dial.style.stroke = 'var(--red)';
+                        document.getElementById('score-status').innerText = 'Distraction Alert';
+                        document.getElementById('score-status').style.color = 'var(--red)';
+                    }
+                    document.getElementById('score-sub').innerText = data.rating;
 
-        async function switchCamera(src) {
-            await fetch('/api/switch_camera?camera=' + encodeURIComponent(src), { method: 'POST' });
+                    // 2. Metrics
+                    document.getElementById('stat-phone').innerText = data.phone_usage_episodes;
+                    document.getElementById('stat-head').innerText = data.head_distraction_episodes;
+                    document.getElementById('stat-sleep').innerText = data.microsleep_episodes + ' (PERCLOS ' + data.perclos_percentage + '%)';
+                    document.getElementById('stat-blinks').innerText = data.blink_count + ' (' + data.blinks_per_minute + ' BPM)';
+                    document.getElementById('session-clock').innerText = data.duration_formatted;
+                    document.getElementById('fps-display').innerText = data.average_fps + ' FPS';
+
+                    // 3. Incident List
+                    const container = document.getElementById('incident-container');
+                    if (data.recent_incidents && data.recent_incidents.length > 0) {
+                        container.innerHTML = '';
+                        data.recent_incidents.slice().reverse().forEach(inc => {
+                            const item = document.createElement('div');
+                            const isDanger = inc.type.includes('PHONE') || inc.type.includes('DROWSY');
+                            item.className = 'incident-item ' + (isDanger ? 'danger' : '');
+                            item.innerHTML = `
+                                <span class="incident-type">${inc.type.replace('_', ' ')}</span>
+                                <span class="incident-time">${inc.timestamp} (+${inc.duration_sec}s)</span>
+                            `;
+                            container.appendChild(item);
+                        });
+                    }
+                }
+            } catch (err) {}
         }
+
+        setInterval(updateDashboard, 800);
+
+        async function switchMode(mode) {
+            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            await fetch('/api/set_mode?mode=' + encodeURIComponent(mode), { method: 'POST' });
+        }
+
+        async function switchSource(src) {
+            await fetch('/api/switch_source?source=' + encodeURIComponent(src), { method: 'POST' });
+        }
+
         async function toggleMesh() {
             await fetch('/api/toggle_mesh', { method: 'POST' });
         }
+
         async function resetStats() {
             await fetch('/api/reset', { method: 'POST' });
+            document.getElementById('incident-container').innerHTML = '<div class="empty-placeholder">Telemetry reset.</div>';
         }
     </script>
 </body>
@@ -314,7 +657,7 @@ def index_page():
 
 if __name__ == "__main__":
     print("=" * 65)
-    print("  DRIVER SAFETY & DISTRACTION MONITOR - WEB DASHBOARD")
+    print("  DISTRACTION DETECTION SYSTEM (DDS) - FLUID WEB DASHBOARD")
     print("  Serving at: http://127.0.0.1:8000")
     print("=" * 65)
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")

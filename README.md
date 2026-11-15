@@ -1,50 +1,44 @@
-# Real-Time Driver Safety & Distraction Detection System (Prototype)
+# Distraction Detection System (DDS)
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![OpenCV](https://img.shields.io/badge/OpenCV-5.0%2B-green.svg)
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-FaceLandmarker-orange.svg)
 ![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-yellow.svg)
-![Status](https://img.shields.io/badge/Status-Production--Ready%20Prototype-success.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-Web%20Dashboard-009688.svg)
 
-A high-performance, real-time computer vision system engineered to monitor driver fatigue, microsleeps, head pose gaze distraction, and external object distractions (such as hand-held cell phone usage). Built with **Python**, **OpenCV**, **Google MediaPipe**, and **Ultralytics YOLOv8**.
+An AI-powered computer vision system designed for real-time human attention, focus, and distraction tracking across diverse real-world environments:
+- 🎓 **Study & Online Education:** Track classroom engagement, exam proctoring focus, and prevent phone distractions.
+- 💼 **Productivity & Deep Work:** Measure workplace focus duration, screen attention, and reduce digital interruptions.
+- 🚗 **Driver & Operator Safety:** Monitor micro-sleeps, prolonged eye closure (EAR), yawning (MAR), looking off-road, and texting while operating vehicles or heavy machinery.
+
+Built with **Python**, **OpenCV**, **Google MediaPipe**, and **Ultralytics YOLOv8**.
 
 ---
 
-## Key Features & Detection Modules
+## Key Detection Capabilities
 
-### 1. Eye-Tracking & Fatigue Monitoring (EAR)
-- Computes **Eye Aspect Ratio (EAR)** in real time using 6-point Euclidean landmark formulations from MediaPipe's 468+ 3D facial mesh.
-- Detects blinks, blink duration, and micro-sleep episodes (consecutive eye closures exceeding $1.5\text{s}$).
-- Calculates **PERCLOS** (Percentage of Eye Closure over time), the NHTSA gold standard metric for driver drowsiness quantification.
+### 1. Eye-Tracking & Fatigue Analysis (EAR & PERCLOS)
+- Computes **Eye Aspect Ratio (EAR)** using 3D Euclidean landmarks from MediaPipe FaceMesh in real time.
+- Quantifies **PERCLOS** (Percentage of Eye Closure), the scientific gold standard for physiological drowsiness and fatigue.
+- Accurately tracks blinks, blink duration, and flags micro-sleep episodes ($> 1.5\text{s}$).
 
-### 2. Yawning & Soporific Fatigue Detection (MAR)
-- Computes **Mouth Aspect Ratio (MAR)** measuring vertical lip expansion against horizontal mouth width.
-- Detects sustained yawning patterns with debounce timers to differentiate speech from fatigue.
+### 2. Gaze Direction & 3D Head Pose (`cv2.solvePnP`)
+- Maps 2D landmarks to an anthropometric 3D facial coordinate model to compute Euler angles (**Pitch, Yaw, Roll**).
+- Flags when the user looks away from their primary focus zone (turning head sideways $> 24^\circ$, looking down at lap/phone $> 18^\circ$, or gazing upwards).
+- Projects an intuitive 3D gaze vector arrow indicating visual focus in real time.
 
-### 3. 3D Head Pose & Gaze Vector Estimation
-- Employs `cv2.solvePnP` against generic 3D anthropometric facial landmarks to derive rotation vectors (`rvec`) and translation vectors (`tvec`).
-- Decomposes rotation matrices into Euler angles:
-  - **Pitch**: Nodding off / looking down at the lap/phone ($> 18^\circ$).
-  - **Yaw**: Turning head away from the road ($> 25^\circ$).
-  - **Roll**: Lateral head tilt.
-- Projects 3D gaze directional vector arrows extending from the nose tip to visually indicate driver focus.
+### 3. External Object & Cell Phone Detection (YOLOv8)
+- Employs a high-speed **YOLOv8 nano** model to identify distraction objects.
+- Real-time detection of **cell phones**, cups, and bottles with debounced multi-frame persistence checks to prevent false alarms.
 
-### 4. External Distraction Detection (YOLOv8)
-- Integrates a lightweight **YOLOv8 nano** model running real-time object detection.
-- Specifically flags external distraction vectors:
-  - **Cell Phone Usage**: High-priority alert when a phone is identified within driver interaction proximity.
-  - **Bottles & Cups**: Flags prolonged drinking or eating while operating the vehicle.
+### 4. Non-Blocking Audio & Visual Alert Coordinator
+- Runs sound synthesis and audio alerts in an asynchronous background worker thread to ensure the video pipeline never drops frames.
+- Rate-limited notification cooldowns prevent alarm fatigue.
 
-### 5. Multi-Threaded Audio & Visual Alert System
-- Asynchronous alert queue executing in a background daemon thread to ensure audio alerts never bottleneck or drop video processing frame rates.
-- Progressive alert tiers: Warning tones $\to$ Urgent critical alarms $\to$ Pulsing emergency HUD banners.
-- Includes rate-limiting cooldown timers to prevent alarm fatigue.
-
-### 6. Automated Telemetry & Drive Analytics
-- Evaluates a dynamic **Driver Safety Score** (0–100 scale) penalized proportionally by safety incidents.
-- Automatically exports comprehensive session metrics on exit:
-  - `session_reports/report_<timestamp>.json`: Detailed numerical statistics and driver rating grade.
-  - `session_reports/incidents_<timestamp>.csv`: Event-by-event timeline logs with exact drive durations.
+### 5. Multi-Mode Operation
+- **General Focus Mode:** Standard attention tracking for any desk or daily scenario.
+- **Study & Work Mode:** Tailored for screen engagement, study focus, and digital distraction reduction.
+- **Driver Safety Mode:** Tailored for road alertness, fatigue, and vehicular safety.
 
 ---
 
@@ -52,132 +46,105 @@ A high-performance, real-time computer vision system engineered to monitor drive
 
 ```mermaid
 flowchart TD
-    A[Video Stream: Webcam / MP4 File] --> B[Frame Preprocessing & Scaling]
-    B --> C[MediaPipe Face Landmarker]
-    B --> D[Ultralytics YOLOv8 Detector]
+    A[Threaded Camera Capture: Webcam / Video] --> B[Frame Buffer]
+    B --> C[MediaPipe 3D Face Landmarker]
+    B --> D[Ultralytics YOLOv8 Inference]
     
-    C --> E[Eye Aspect Ratio EAR]
-    C --> F[Mouth Aspect Ratio MAR]
+    C --> E[Eye Aspect Ratio EAR & Blinks]
+    C --> F[Mouth Aspect Ratio MAR & Yawns]
     C --> G[solvePnP 3D Head Pose: Pitch/Yaw/Roll]
     
-    D --> H[Cell Phone & Object Bounding Boxes]
+    D --> H[Cell Phone & Object Detection]
     
-    E --> I{Safety Rule Engine}
+    E --> I{DDS Rules Engine}
     F --> I
     G --> I
     H --> I
     
-    I -->|Drowsiness / Microsleep| J[Critical Alarm & Flash Banner]
-    I -->|Phone Usage Detected| K[Distraction Warning Alert]
-    I -->|Head Off-Road| L[Look-Ahead Advisory Alert]
-    I -->|Yawning| M[Fatigue Reminder Alert]
+    I -->|Focused State| J[Attentive Pill: Green]
+    I -->|Phone Detected| K[Distraction Alert: Red]
+    I -->|Looking Away| L[Gaze Advisory: Amber]
+    I -->|Fatigue / Drowsy| M[Drowsiness Alarm: Crimson]
     
-    I --> N[Driver Telemetry & PERCLOS Engine]
-    N --> O[Real-Time Automotive HUD Overlay]
-    O --> P[Interactive OpenCV Display / Video Output]
-    N --> Q[Session Report: JSON & CSV]
+    I --> N[Attention Telemetry & Score Engine]
+    N --> O[Minimalist Modern HUD Overlay]
+    O --> P[Interactive Web Dashboard / Desktop Window]
+    N --> Q[Session Analytics: JSON & CSV]
 ```
 
 ---
 
-## Directory Structure
+## Project Structure
 
 ```
 DSS/
-├── config.py                 # Central parameters, thresholds, and colors
-├── download_models.py        # Automated model weights downloader
-├── face_mesh_detector.py     # MediaPipe Face Landmarker, EAR, MAR & Head Pose
-├── yolo_detector.py          # YOLOv8 external object & phone distraction module
-├── alert_system.py           # Multi-threaded non-blocking audio & visual alert manager
-├── analytics.py              # Telemetry tracker, PERCLOS calculation & report exporter
-├── ui_overlay.py             # Automotive Heads-Up Display (HUD) rendering
-├── main.py                   # Master application execution pipeline
-├── synthetic_demo.py         # Multi-phase synthetic driver video generator
-├── test_system.py            # Unit & integration automated test suite
-├── requirements.txt          # Python dependencies
+├── config.py                 # Parameters, thresholds, and color palettes
+├── camera.py                 # Threaded, asynchronous video capture engine
+├── face_mesh_detector.py     # MediaPipe Face Landmarker, EAR, MAR & 3D Head Pose
+├── yolo_detector.py          # YOLOv8 object & phone distraction detector
+├── alert_system.py           # Multi-threaded non-blocking audio & visual alerts
+├── analytics.py              # Telemetry engine, PERCLOS & Attention Score calculator
+├── ui_overlay.py             # Minimalist glassmorphic HUD overlay
+├── app_web.py                # Modern FastAPI interactive browser dashboard
+├── main.py                   # Master desktop application runner
+├── synthetic_demo.py         # Multi-phase simulation scenario video generator
+├── test_system.py            # Automated unit and integration test suite
+├── start_web.bat             # 1-click Web Dashboard launcher
+├── start_desktop.bat         # 1-click Desktop application launcher
+├── start_demo.bat            # 1-click Scenario simulation demo launcher
+├── requirements.txt          # Dependencies specification
 ├── models/                   # Pretrained weights (face_landmarker.task, yolov8n.pt)
-├── session_reports/          # Exported JSON summaries and CSV incident logs
-└── snapshots/                # High-resolution HUD screenshots
+└── session_reports/          # Automatically exported JSON summaries & CSV logs
 ```
 
 ---
 
-## Installation & Setup
+## Quick Start & Running
 
-1. **Clone or navigate to the repository directory**:
-   ```bash
-   cd c:\Users\VASISHTA\OneDrive\Desktop\DSS
-   ```
+### 1. Launch the Modern Web Dashboard (Recommended)
+Double-click `start_web.bat` or run:
+```powershell
+python app_web.py
+```
+Then open your browser to **http://127.0.0.1:8000**.
+- Features live video streaming with 3D gaze indicators and object brackets.
+- Animated SVG Focus Score dial.
+- Mode switcher (General, Study, Driving).
+- Camera switcher and chronological incident timeline.
 
-2. **Verify Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Ensure pretrained model weights are downloaded**:
-   ```bash
-   python download_models.py
-   ```
-   *(Both `models/face_landmarker.task` and `models/yolov8n.pt` will be verified and downloaded automatically).*
-
----
-
-## Running the System
-
-### 1. Live Webcam Feed
-Launch the live camera stream (uses default camera index `0`):
-```bash
+### 2. Launch the Desktop Application
+Double-click `start_desktop.bat` or run:
+```powershell
+# Default Camera 0
 python main.py --source 0
+
+# Specify Mode (GENERAL, STUDY, or DRIVING)
+python main.py --source 0 --mode STUDY
 ```
 
-### 2. Demonstration Video File
-Run the system against a pre-recorded drive or our generated scenario simulation video:
-```bash
+### 3. Run the Demonstration Video
+```powershell
 python main.py --source sample_driver_demo.mp4
 ```
 
-### 3. Record Annotated Session Video
-To record the full HUD output to a high-definition video file:
-```bash
-python main.py --source 0 --output output_drive.mp4
-```
-
-### 4. Low-Power / Face-Only Mode (Disable YOLOv8)
-For constrained hardware environments:
-```bash
-python main.py --source 0 --no-yolo
-```
-
 ---
 
-## Keyboard Controls
+## Desktop Keyboard Shortcuts
 
 | Key | Action |
 |:---:|:---|
-| **`Q`** or **`ESC`** | Quit application gracefully and export session analytics |
-| **`M`** | Toggle audio alert mute / unmute |
-| **`R`** | Reset session statistics and safety score |
-| **`S`** | Capture instantaneous HUD snapshot to `snapshots/` folder |
-| **`D`** | Toggle detailed facial mesh wireframe overlay |
+| **`Q`** or **`ESC`** | Gracefully quit and save session telemetry report |
+| **`M`** | Toggle audio alerts (**Mute / Unmute**) |
+| **`R`** | Reset session statistics and attention score |
+| **`S`** | Save an instant snapshot to `snapshots/` folder |
+| **`D`** | Toggle detailed 3D facial mesh wireframe overlay |
 
 ---
 
-## Running Automated Tests
+## Automated Tests
 
-Run the built-in unit and integration test suite:
-```bash
+Run the built-in test suite:
+```powershell
 python test_system.py
 ```
-This validates all model initializations, numerical metric calculations, threading behaviors, and video pipelines.
-
----
-
-## Key Thresholds Reference (`config.py`)
-
-| Metric | Threshold | Condition | Action |
-|:---|:---:|:---|:---|
-| **Eye Aspect Ratio (EAR)** | `< 0.21` | Eyes closed $> 1.5\text{s}$ | Critical Drowsiness Alarm |
-| **Mouth Aspect Ratio (MAR)** | `> 0.65` | Mouth wide open $> 1.0\text{s}$ | Yawning / Fatigue Alert |
-| **Head Yaw** | `> ±25°` | Looking left/right off road | Eyes-Off-Road Warning |
-| **Head Pitch** | `> +18°` | Head drooping / looking at lap | Inattention Alert |
-| **YOLO Cell Phone** | `Conf ≥ 0.35` | Phone in driver interaction zone | Cell Phone Distraction Alert |
+*(All 6 unit and integration test cases validate end-to-end functionality).*

@@ -1,6 +1,6 @@
 """
-Real-Time Driver Safety & Distraction Detection System
-Configuration Parameters and Thresholds
+Real-Time Distraction Detection System (DDS)
+Configuration Parameters, Thresholds, and Operation Modes.
 """
 
 import os
@@ -19,47 +19,51 @@ os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
 FACE_LANDMARKER_MODEL = os.path.join(MODELS_DIR, "face_landmarker.task")
 YOLO_MODEL_PATH = os.path.join(MODELS_DIR, "yolov8n.pt")
 
-# Camera & Video Capture Settings
+# Operation Modes
+MODE_STUDY = "STUDY"          # Online classes, studying, deep work, proctoring
+MODE_DRIVING = "DRIVING"      # Automotive driving & road safety
+MODE_GENERAL = "GENERAL"      # General real-time attention & distraction detection
+DEFAULT_MODE = MODE_GENERAL
+
+# Default Video Capture Settings
 DEFAULT_CAMERA_INDEX = 0
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 TARGET_FPS = 30
 
-# Drowsiness / Fatigue Detection Thresholds
-# Eye Aspect Ratio (EAR)
+# Eye Tracking & Drowsiness Thresholds (EAR)
 EAR_THRESHOLD = 0.21               # EAR below this is considered eye closed
-EAR_CONSEC_FRAMES = 25             # ~0.8s - 1.0s at 30fps for micro-sleep warning
-DROWSY_TIME_THRESHOLD_SEC = 1.5    # Continuous seconds of eye closure for critical alert
+DROWSY_TIME_THRESHOLD_SEC = 1.5    # Continuous eye closure for drowsiness alert
 
-# Mouth Aspect Ratio (MAR) for Yawning
+# Mouth Aspect Ratio (MAR) for Yawning / Fatigue
 MAR_THRESHOLD = 0.65               # MAR above this is considered yawning
-MAR_CONSEC_FRAMES = 30             # Frames required to confirm sustained yawn
-YAWN_COOLDOWN_SEC = 5.0            # Seconds before registering another yawn
+MAR_CONSEC_FRAMES = 25
+YAWN_COOLDOWN_SEC = 4.0
 
 # Head Pose & Gaze Distraction Thresholds
-HEAD_YAW_THRESHOLD = 25.0          # Degrees left/right to trigger off-road distraction
-HEAD_PITCH_DOWN_THRESHOLD = 18.0   # Degrees down (looking at phone/lap)
-HEAD_PITCH_UP_THRESHOLD = 25.0     # Degrees up
-DISTRACTION_TIME_SEC = 1.8         # Sustained seconds looking away before alert
+HEAD_YAW_THRESHOLD = 24.0          # Degrees left/right to trigger looking-away distraction
+HEAD_PITCH_DOWN_THRESHOLD = 18.0   # Degrees down (looking at phone/lap/desk)
+HEAD_PITCH_UP_THRESHOLD = 25.0     # Degrees up (staring at ceiling)
+DISTRACTION_TIME_SEC = 1.6         # Sustained seconds looking away before alert
 
-# YOLOv8 Distraction Detection Thresholds
+# YOLOv8 External Object Distraction Thresholds
 YOLO_CONFIDENCE = 0.35
-# COCO class IDs: 67 = cell phone, 39 = bottle, 41 = cup
+# COCO class IDs: 67 = cell phone, 39 = bottle, 41 = cup, 76 = scissors/tools
 TARGET_OBJECT_CLASSES = [67, 39, 41]
 PHONE_CLASS_ID = 67
-PHONE_DISTRACTION_CONSEC_FRAMES = 10  # Consecutive frames to trigger phone alert
+PHONE_DISTRACTION_CONSEC_FRAMES = 8  # Debounce consecutive frames to trigger phone alert
 
 # Alert System Settings
 AUDIO_ALERTS_ENABLED = True
-ALERT_COOLDOWN_SEC = 2.5           # Min seconds between audio alerts
-BEEP_FREQUENCY = 1500              # Hz for warning beep
-BEEP_DURATION_MS = 350             # ms
+ALERT_COOLDOWN_SEC = 2.0           # Minimum seconds between audio alerts
+BEEP_FREQUENCY = 1600              # Hz for warning tone
+BEEP_DURATION_MS = 250             # ms
 
-# UI & HUD Styling (BGR Colors)
-COLOR_SAFE = (72, 199, 116)         # Soft Emerald Green
-COLOR_WARNING = (30, 180, 255)      # Amber / Orange
-COLOR_DANGER = (50, 50, 245)        # Vivid Crimson Red
-COLOR_PRIMARY = (255, 165, 0)       # Cyan/Blue Accent
-COLOR_CARD_BG = (20, 24, 30)        # Dark Charcoal
-COLOR_TEXT = (245, 245, 245)        # Crisp White
-COLOR_MUTED = (160, 160, 160)       # Light Slate Gray
+# Aesthetic UI Theme Palette (BGR for OpenCV, Hex for Web)
+COLOR_SAFE = (118, 230, 0)          # Vibrant Spring Green (00e676)
+COLOR_WARNING = (0, 171, 255)       # Amber Gold (ffab00)
+COLOR_DANGER = (68, 23, 255)        # Vivid Crimson Red (ff1744)
+COLOR_PRIMARY = (255, 210, 0)       # Cyan Accent (00d2ff)
+COLOR_CARD_BG = (22, 28, 40)        # Midnight Navy Glass
+COLOR_TEXT = (245, 248, 250)        # Pure Crisp White
+COLOR_MUTED = (165, 180, 195)       # Soft Slate Gray
