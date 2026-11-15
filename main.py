@@ -80,16 +80,20 @@ def main():
 
     # 1. Initialize Video Capture
     source = args.source
-    if source.isdigit():
+    if str(source).isdigit():
         source = int(source)
-        print(f"[INIT] Opening live camera index {source}...")
+        print(f"[INIT] Opening live camera index {source} (trying DirectShow backend)...")
+        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            print(f"[INIT] DirectShow failed, trying default backend for camera {source}...")
+            cap = cv2.VideoCapture(source)
     else:
         print(f"[INIT] Opening video source file: {source}...")
+        cap = cv2.VideoCapture(source)
 
-    cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        if source == 0 and os.path.exists("sample_driver_demo.mp4"):
-            print("[INFO] Physical webcam index 0 not detected in this session.")
+        if isinstance(source, int) and os.path.exists("sample_driver_demo.mp4"):
+            print(f"[INFO] Camera index {source} could not be opened.")
             print("[INFO] Automatically falling back to demo video 'sample_driver_demo.mp4'...")
             source = "sample_driver_demo.mp4"
             cap = cv2.VideoCapture(source)
