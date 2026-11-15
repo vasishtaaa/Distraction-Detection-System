@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+
+# Data & Output Files
+test_annotated.mp4
+test_face.jpg
+session_reports/
+snapshots/
+
+# OS
+.DS_Store
+Thumbs.db
